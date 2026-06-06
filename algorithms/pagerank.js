@@ -14,7 +14,9 @@ export function pageRank(graph, dampingFactor = 0.85, iterations = 50) {
   // Initialize all scores equally
   nodes.forEach(n => {
     scores.set(n, 1 / N);
-    outDegree.set(n, adj.get(n)?.size || 0);
+    // Weighted out-degree: sum of edge weights for correct probability transition
+    const sumWeights = Array.from(adj.get(n)?.values() || []).reduce((sum, w) => sum + w, 0);
+    outDegree.set(n, sumWeights || 1);
   });
 
   for (let iter = 0; iter < iterations; iter++) {

@@ -3,11 +3,18 @@
   "name": "GitHub SNA – Social Network Analyzer",
   "version": "1.0.0",
   "description": "Analyze GitHub collaboration networks using graph algorithms (BFS, PageRank, Union-Find)",
-  "permissions": ["storage", "sidePanel", "windows"],
+  "permissions": ["storage", "sidePanel", "windows", "contextMenus"],
   "background": {
     "service_worker": "background.js",
     "type": "module"
   },
+  "content_scripts": [
+    {
+      "matches": ["https://github.com/*"],
+      "js": ["content.js"],
+      "css": ["content.css"]
+    }
+  ],
   "host_permissions": ["https://api.github.com/*"],
   "action": {
     "default_popup": "popup/popup.html",

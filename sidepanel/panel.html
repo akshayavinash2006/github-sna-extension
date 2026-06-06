@@ -74,6 +74,23 @@
     #status-bar{padding:6px 16px;background:var(--surface2);border-top:1px solid var(--border);font-family:'Space Mono',monospace;font-size:10px;color:var(--muted);flex-shrink:0;min-height:26px;}
     #status-bar.ok{color:var(--accent);}
     #status-bar.err{color:var(--warn);}
+
+    /* Active path neon pulse link */
+    .active-path-link {
+      stroke: var(--accent2) !important;
+      stroke-dasharray: 6, 6;
+      animation: dash 1s linear infinite;
+    }
+    @keyframes dash {
+      to {
+        stroke-dashoffset: -12;
+      }
+    }
+    
+    /* Spinner */
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
   </style>
 </head>
 <body>
@@ -89,6 +106,10 @@
 
 <div class="main">
   <div id="graph-wrap">
+    <div id="loadingOverlay" style="display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(13, 17, 23, 0.85); z-index: 10; flex-direction: column; align-items: center; justify-content: center; gap: 16px;">
+      <div style="width: 40px; height: 40px; border: 3px solid var(--border); border-top-color: var(--accent2); border-radius: 50%; animation: spin 1s linear infinite;"></div>
+      <div id="loadingText" style="font-family: 'Space Mono', monospace; font-size: 12px; color: var(--text); text-align: center; padding: 0 20px;">Analyzing network…</div>
+    </div>
     <div class="empty" id="emptyState">
       <div class="empty-icon">⬡</div>
       <div class="empty-text">Run an analysis in the popup<br>to see your graph here</div>
@@ -114,6 +135,9 @@
       <button class="tab" data-tab="paths">Paths</button>
       <button class="tab" data-tab="communities">Clusters</button>
     </div>
+    <div style="padding: 10px; border-bottom: 1px solid var(--border); flex-shrink: 0;">
+      <input type="text" id="searchNodes" placeholder="Search username…" autocomplete="off" spellcheck="false" style="width: 100%; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: 'Space Mono', monospace; font-size: 11px; padding: 7px 10px; outline: none; transition: border-color 0.2s;" />
+    </div>
 
     <div class="tab-content active influencers">
       <!-- Populated by JS -->
@@ -131,11 +155,34 @@
     <div class="tab-content communities">
       <!-- Populated by JS -->
     </div>
+    <div id="detailCard" style="display: none; border-top: 1px solid var(--border); padding: 12px; background: var(--surface2); flex-shrink: 0; flex-direction: column; gap: 8px;">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <img id="detailAvatar" src="" style="width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface);" onerror="this.src='data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%2232%22%20height=%2232%22%20viewBox=%220%200%2024%2024%22%3E%3Crect%20fill=%22%23161b22%22%20width=%2224%22%20height=%2224%22/%3E%3C/svg%3E'" />
+        <div style="min-width: 0; flex: 1;">
+          <div id="detailLogin" style="font-weight: 700; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--accent2);">—</div>
+          <div id="detailName" style="font-size: 10px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">—</div>
+        </div>
+        <button id="closeDetail" style="background: none; border: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 2px 6px;">×</button>
+      </div>
+      <div id="detailBio" style="font-size: 11px; color: var(--text); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 16px;">Loading profile…</div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 10px; font-family: 'Space Mono', monospace;">
+        <div style="background: var(--bg); border: 1px solid var(--border); padding: 4px 6px; border-radius: 4px;">
+          <span style="color: var(--muted)">Repos:</span> <strong id="detailRepos">—</strong>
+        </div>
+        <div style="background: var(--bg); border: 1px solid var(--border); padding: 4px 6px; border-radius: 4px;">
+          <span style="color: var(--muted)">Followers:</span> <strong id="detailFollowers">—</strong>
+        </div>
+      </div>
+      <div style="display: flex; gap: 6px; margin-top: 4px;">
+        <a id="detailGithubLink" href="#" target="_blank" style="flex: 1; text-align: center; background: var(--surface); border: 1px solid var(--border); color: var(--accent2); text-decoration: none; border-radius: 4px; font-size: 10px; font-weight: 700; padding: 6px 0; font-family: 'Space Mono', monospace; transition: background 0.2s;">PROFILE ↗</a>
+        <button id="detailAnalyzeBtn" style="flex: 1; text-align: center; background: var(--accent); color: var(--bg); border: none; border-radius: 4px; font-size: 10px; font-weight: 700; padding: 6px 0; font-family: 'Space Mono', monospace; cursor: pointer; transition: opacity 0.2s;">ANALYZE ↻</button>
+      </div>
+    </div>
   </aside>
 </div>
 
 <div id="status-bar">Loading…</div>
 
-<script src="panel.js"></script>
+<script type="module" src="panel.js"></script>
 </body>
 </html>
