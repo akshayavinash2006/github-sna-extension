@@ -173,6 +173,44 @@
     }
 
     .open-panel-btn:hover { background: var(--border); opacity: 1; }
+
+    .cache-bar {
+      margin-top: 8px;
+      padding: 10px 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 11px;
+      color: var(--muted);
+      font-family: 'Space Mono', monospace;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .cache-val { color: var(--accent); }
+
+    .clear-cache-btn {
+      background: transparent;
+      color: var(--warn);
+      border: 1px solid var(--warn);
+      border-radius: 4px;
+      font-family: 'Space Mono', monospace;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 3px 8px;
+      cursor: pointer;
+      width: auto;
+      letter-spacing: 0.04em;
+      transition: background 0.2s, color 0.2s;
+    }
+
+    .clear-cache-btn:hover {
+      background: var(--warn);
+      color: #0d1117;
+      opacity: 1;
+    }
   </style>
 </head>
 <body>
@@ -223,6 +261,10 @@
   <div class="rate-bar">
     <span>API Rate Limit</span>
     <span class="rate-val" id="rateDisplay">— / —</span>
+  </div>
+  <div class="cache-bar">
+    <span>Cache: <span class="cache-val" id="cacheDisplay">— entries</span></span>
+    <button class="clear-cache-btn" id="clearCacheBtn">✕ Clear</button>
   </div>
 
   <script type="module" src="popup.js"></script>

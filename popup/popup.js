@@ -1,9 +1,8 @@
 // popup/popup.js
 import { setToken, getUser, getStarredRepos, getStargazers, getRateLimit, getFollowers, getFollowing, getUserRepos, getContributors } from '../api/github.js';
 import { buildGraphFromStars, buildGraphFromFollowers, buildGraphFromContributors } from '../graph/builder.js';
-import { getRankedInfluencers } from '../algorithms/pagerank.js';
-import { detectCommunities } from '../algorithms/unionFind.js';
-import { degreeCentrality } from '../algorithms/centrality.js';
+import { runAlgorithms } from '../algorithms/runner.js';
+import { cacheStats, cacheClearAll } from '../api/cache.js';
 
 const usernameEl = document.getElementById('username');
 const tokenEl    = document.getElementById('token');
@@ -14,6 +13,8 @@ const openPanelBtn = document.getElementById('openPanel');
 const graphTypeEl  = document.getElementById('graphType');
 const maxNodesEl   = document.getElementById('maxNodes');
 const maxNodesVal  = document.getElementById('maxNodesVal');
+const cacheDisplay = document.getElementById('cacheDisplay');
+const clearCacheBtn = document.getElementById('clearCacheBtn');
 
 // Keep slider value updated in label
 if (maxNodesEl && maxNodesVal) {
@@ -40,6 +41,7 @@ chrome.storage.local.get(['gh_token', 'gh_username', 'sna_graph_type', 'sna_max_
     setToken(data.gh_token);
     updateRateLimit();
   }
+  updateCacheStats();
 });
 
 async function updateRateLimit() {
@@ -49,6 +51,27 @@ async function updateRateLimit() {
     rateEl.textContent = `${remaining} / ${limit}`;
     rateEl.style.color = remaining < 10 ? 'var(--warn)' : 'var(--accent2)';
   } catch { rateEl.textContent = '—'; }
+}
+
+async function updateCacheStats() {
+  try {
+    const stats = await cacheStats();
+    cacheDisplay.textContent = stats.count > 0
+      ? `${stats.count} entries cached`
+      : 'empty';
+  } catch { cacheDisplay.textContent = '—'; }
+}
+
+if (clearCacheBtn) {
+  clearCacheBtn.addEventListener('click', async () => {
+    clearCacheBtn.disabled = true;
+    clearCacheBtn.textContent = 'Clearing…';
+    const cleared = await cacheClearAll();
+    setStatus(`Cache cleared (${cleared} entries removed).`, 'ok');
+    await updateCacheStats();
+    clearCacheBtn.disabled = false;
+    clearCacheBtn.textContent = '✕ Clear';
+  });
 }
 
 function openSidePanel() {
@@ -101,12 +124,10 @@ analyzeBtn.addEventListener('click', async () => {
       throw new Error("Could not find any connections to analyze.");
     }
 
-    setStatus('Running algorithms…');
+    setStatus('Running algorithms (off-thread)…');
 
-    // Run algorithms on the FULL graph to ensure accuracy of scores/clusters
-    const influencers = getRankedInfluencers(graph);
-    const communities = detectCommunities(graph);
-    const centrality  = degreeCentrality(graph);
+    // Run all three algorithms in a Web Worker so the UI stays responsive
+    const { influencers, communities, centrality } = await runAlgorithms(graph, setStatus);
 
     const communityMap = {};
     let colorIdx = 0;
@@ -187,6 +208,7 @@ analyzeBtn.addEventListener('click', async () => {
     }, () => {
       setStatus(`✓ Done! Showing ${prunedNodes.length}/${totalNodesCount} users, ${prunedLinks.length}/${totalEdgesCount} edges.`, 'ok');
       updateRateLimit();
+      updateCacheStats();
     });
 
   } catch (err) {

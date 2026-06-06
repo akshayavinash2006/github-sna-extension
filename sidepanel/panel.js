@@ -1,9 +1,7 @@
 // sidepanel/panel.js — render and interact with graph
 import { getUser, getStarredRepos, getStargazers, getRateLimit, getFollowers, getFollowing, getUserRepos, getContributors } from '../api/github.js';
 import { buildGraphFromStars, buildGraphFromFollowers, buildGraphFromContributors } from '../graph/builder.js';
-import { getRankedInfluencers } from '../algorithms/pagerank.js';
-import { detectCommunities } from '../algorithms/unionFind.js';
-import { degreeCentrality } from '../algorithms/centrality.js';
+import { runAlgorithms } from '../algorithms/runner.js';
 
 let graph = null;
 let influencers = [];
@@ -16,6 +14,12 @@ const COLORS = [
   '#39d353', '#58a6ff', '#e3b341', '#f78166', '#d29922',
   '#79c0ff', '#56d364', '#b1baf8', '#ffa657', '#ff7b72'
 ];
+
+// Blank SVG placeholder used when an avatar image fails to load.
+// Defined here so it is never injected as an inline HTML attribute (CSP violation).
+const FALLBACK_AVATAR = 'data:image/svg+xml,' + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24"><rect fill="#161b22" width="24" height="24"/></svg>'
+);
 
 // DOM Elements
 const graphWrap = document.getElementById('graph-wrap');
@@ -40,6 +44,11 @@ const detailFollowers = document.getElementById('detailFollowers');
 const detailGithubLink = document.getElementById('detailGithubLink');
 const detailAnalyzeBtn = document.getElementById('detailAnalyzeBtn');
 const closeDetail = document.getElementById('closeDetail');
+
+// Attach avatar fallback via JS — inline onerror in HTML violates MV3 CSP
+if (detailAvatar) {
+  detailAvatar.addEventListener('error', () => { detailAvatar.src = FALLBACK_AVATAR; });
+}
 
 let currentDetailRequest = null;
 
@@ -387,14 +396,20 @@ function renderInfluencers() {
   influencers.forEach((inf, idx) => {
     const item = document.createElement('div');
     item.className = 'influencer-item';
+    // No onerror attribute in innerHTML — that violates MV3 CSP.
+    // Set the fallback handler programmatically after injecting markup.
     item.innerHTML = `
       <div class="rank">${idx + 1}</div>
-      <img class="avatar" src="${inf.avatar}" onerror="this.src='data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%2224%22%20height=%2224%22%20viewBox=%220%200%2024%2024%22%3E%3Crect%20fill=%22%23161b22%22%20width=%2224%22%20height=%2224%22/%3E%3C/svg%3E'"/>
+      <img class="avatar" src="${inf.avatar}" />
       <div class="inf-info">
         <div class="inf-login">${inf.login}</div>
         <div class="score-bar-wrap"><div class="score-bar" style="width:${Math.min(inf.score * 100, 100)}%"></div></div>
       </div>
     `;
+    const avatarImg = item.querySelector('img.avatar');
+    if (avatarImg) {
+      avatarImg.addEventListener('error', () => { avatarImg.src = FALLBACK_AVATAR; });
+    }
     item.addEventListener('click', () => {
       selectNode(inf.login);
       const matchedNode = graph.nodes.find(n => n.login.toLowerCase() === inf.login.toLowerCase());
@@ -556,6 +571,14 @@ function findPath() {
       .attr('stroke', d => path.includes(d.login) ? 'var(--accent2)' : '#0d1117')
       .attr('stroke-width', d => path.includes(d.login) ? 4 : 2);
 
+    // Apply .classed() separately — D3 bundled here doesn't support it on transitions
+    window._linkElements
+      .classed('active-path-link', d => {
+        const s = typeof d.source === 'object' ? d.source.login : d.source;
+        const t = typeof d.target === 'object' ? d.target.login : d.target;
+        return path.includes(s) && path.includes(t);
+      });
+
     window._linkElements
       .transition().duration(300)
       .attr('opacity', d => {
@@ -567,11 +590,6 @@ function findPath() {
         const s = typeof d.source === 'object' ? d.source.login : d.source;
         const t = typeof d.target === 'object' ? d.target.login : d.target;
         return (path.includes(s) && path.includes(t)) ? 5 : Math.min(d.weight * 2, 8);
-      })
-      .classed('active-path-link', d => {
-        const s = typeof d.source === 'object' ? d.source.login : d.source;
-        const t = typeof d.target === 'object' ? d.target.login : d.target;
-        return path.includes(s) && path.includes(t);
       });
   }
 
@@ -660,10 +678,8 @@ async function runAnalysis(username, graphType, maxNodes) {
       throw new Error("Could not find any connections to analyze.");
     }
 
-    onProgress('Running centrality algorithms...');
-    const influencersList = getRankedInfluencers(graphObj);
-    const communitiesList = detectCommunities(graphObj);
-    const centralityList  = degreeCentrality(graphObj);
+    onProgress('Running algorithms (off-thread)…');
+    const { influencers: influencersList, communities: communitiesList, centrality: centralityList } = await runAlgorithms(graphObj, onProgress);
 
     const communityMap = {};
     let colorIdx = 0;
