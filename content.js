@@ -9,18 +9,14 @@ function injectSNAButton() {
   const username = getProfileUsername();
   if (!username) return;
 
-  // Check if button already exists
   if (document.getElementById('github-sna-btn')) return;
 
-  // Locate the target container (Editable area or names section)
-  // These classes are standard on user profile sidebars
-  const target = document.querySelector('.js-profile-editable-area') || 
+  const target = document.querySelector('.js-profile-editable-area') ||
                  document.querySelector('.vcard-names-container') ||
                  document.querySelector('.js-profile-editable-replace');
-  
+
   if (!target) return;
 
-  // Create the action button
   const btn = document.createElement('button');
   btn.id = 'github-sna-btn';
   btn.className = 'btn btn-block sna-btn-custom';
@@ -33,37 +29,60 @@ function injectSNAButton() {
     SNA Analyze Network
   `;
 
+  // Track per-button whether the context died on a previous click
+  let dead = false;
+
   btn.addEventListener('click', () => {
+    if (dead) {
+      btn.innerHTML = '⚠ Reload page to reconnect';
+      btn.disabled = true;
+      return;
+    }
+
     btn.disabled = true;
     const originalContent = btn.innerHTML;
     btn.innerHTML = `
-      <svg class="octicon octicon-graph sna-btn-icon spin" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" style="animation: spin 1s linear infinite;">
+      <svg class="octicon octicon-graph sna-btn-icon" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" style="animation:spin 1s linear infinite;">
         <path d="M8 12a4 4 0 1 1 4-4v1h1V8a5 5 0 1 0-5 5v1h1v-1a4 4 0 0 1-1-1Zm0-7a3 3 0 1 0 3 3V7H9v1h2v1H9a3 3 0 0 0-1-6Z"/>
       </svg>
       Analyzing...
     `;
-    
-    chrome.runtime.sendMessage({
-      type: 'TRIGGER_SNA_ANALYSIS',
-      username: username
-    }, (response) => {
-      // Re-enable and reset after brief delay to let side panel open
-      setTimeout(() => {
-        btn.disabled = false;
-        btn.innerHTML = originalContent;
-      }, 1000);
-    });
+
+    try {
+      chrome.runtime.sendMessage(
+        { type: 'TRIGGER_SNA_ANALYSIS', username },
+        () => {
+          // Swallow runtime.lastError so Chrome doesn't log an unchecked error
+          void chrome.runtime.lastError;
+          setTimeout(() => {
+            btn.disabled = false;
+            btn.innerHTML = originalContent;
+          }, 1000);
+        }
+      );
+    } catch (_) {
+      // Extension was reloaded while this tab was open — context is gone.
+      // Mark as dead so future clicks don't retry.
+      dead = true;
+      btn.innerHTML = '⚠ Reload page to reconnect';
+      // keep btn.disabled = true
+    }
   });
 
-  // Insert inside target container
   target.appendChild(btn);
 }
 
-// Initial Run
+// Initial injection
 injectSNAButton();
 
-// Setup MutationObserver to handle pjax/turbo page changes
+// Watch for GitHub pjax/Turbo navigations (no-reload tab transitions).
+// Wraps callback in try-catch so a dead context doesn't surface errors here.
 const observer = new MutationObserver(() => {
-  injectSNAButton();
+  try {
+    injectSNAButton();
+  } catch (_) {
+    // Context invalidated — stop observing silently
+    observer.disconnect();
+  }
 });
 observer.observe(document.body, { childList: true, subtree: true });

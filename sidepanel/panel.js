@@ -2,6 +2,7 @@
 import { getUser, getStarredRepos, getStargazers, getRateLimit, getFollowers, getFollowing, getUserRepos, getContributors } from '../api/github.js';
 import { buildGraphFromStars, buildGraphFromFollowers, buildGraphFromContributors } from '../graph/builder.js';
 import { runAlgorithms } from '../algorithms/runner.js';
+import { getLatestGraph, getGraphById, getAllGraphHistory, deleteGraphById, saveGraph } from '../api/db.js';
 
 let graph = null;
 let influencers = [];
@@ -52,67 +53,60 @@ if (detailAvatar) {
 
 let currentDetailRequest = null;
 
-// Loads data from storage and initializes
+// Loads the most recent graph from IndexedDB and renders it
 function loadGraphData() {
-  chrome.storage.local.get(
-    ['sna_graph', 'sna_influencers', 'sna_communities', 'sna_seed', 'sna_stats'],
-    (data) => {
-      console.log('Storage data loaded:', { 
-        hasGraph: !!data.sna_graph,
-        graphNodes: data.sna_graph?.nodes?.length,
-        hasInfluencers: !!data.sna_influencers,
-        seed: data.sna_seed
-      });
-
-      if (data.sna_graph && data.sna_graph.nodes && data.sna_graph.nodes.length > 0) {
-        graph = data.sna_graph;
-        influencers = data.sna_influencers || [];
-        communities = data.sna_communities || {};
-        seed = data.sna_seed || '';
-        stats = data.sna_stats || {};
-
-        seedBadge.textContent = seed || '—';
-        if (stats.displayNodes && stats.displayNodes < stats.nodes) {
-          statNodes.textContent = `${stats.displayNodes}/${stats.nodes}`;
-        } else {
-          statNodes.textContent = stats.nodes || graph.nodes.length;
-        }
-
-        if (stats.displayEdges && stats.displayEdges < stats.edges) {
-          statEdges.textContent = `${stats.displayEdges}/${stats.edges}`;
-        } else {
-          statEdges.textContent = stats.edges || graph.links.length;
-        }
-
-        statComm.textContent = stats.communities || 0;
-
-        emptySt.style.display = 'none';
-        graphSvg.style.display = 'block';
-
-        console.log('Rendering graph...');
-        try {
-          renderGraph();
-          renderInfluencers();
-          renderCommunities();
-          const nodesStr = stats.displayNodes && stats.displayNodes < stats.nodes 
-            ? `${stats.displayNodes}/${stats.nodes}` 
-            : (stats.nodes || graph.nodes.length);
-          const edgesStr = stats.displayEdges && stats.displayEdges < stats.edges 
-            ? `${stats.displayEdges}/${stats.edges}` 
-            : (stats.edges || graph.links.length);
-          updateStatus(`✓ Graph loaded: ${nodesStr} users, ${edgesStr} edges.`, 'ok');
-        } catch (err) {
-          console.error('Error rendering graph:', err);
-          updateStatus(`Error rendering graph: ${err.message}`, 'err');
-        }
-      } else {
-        console.log('No graph data found in storage');
-        emptySt.style.display = 'flex';
-        graphSvg.style.display = 'none';
-        updateStatus('No graph data. Run an analysis in popup or profile.', '');
-      }
+  getLatestGraph().then((data) => {
+    if (data && data.nodes && data.nodes.length > 0) {
+      applyGraphData(data);
+    } else {
+      emptySt.style.display = 'flex';
+      graphSvg.style.display = 'none';
+      updateStatus('No graph data. Run an analysis in popup or on a profile.', '');
     }
-  );
+  }).catch(err => {
+    console.error('Failed to load from IndexedDB:', err);
+    updateStatus('Error loading graph data.', 'err');
+  });
+}
+
+// Apply a loaded graph data record to the panel state and render
+function applyGraphData(data) {
+  graph       = { nodes: data.nodes, links: data.links };
+  influencers = data.influencers || [];
+  communities = data.communities || {};
+  seed        = data.seed || '';
+  stats       = data.stats || {};
+
+  seedBadge.textContent = seed || '—';
+
+  if (stats.displayNodes && stats.displayNodes < stats.nodes) {
+    statNodes.textContent = `${stats.displayNodes}/${stats.nodes}`;
+  } else {
+    statNodes.textContent = stats.nodes || graph.nodes.length;
+  }
+  if (stats.displayEdges && stats.displayEdges < stats.edges) {
+    statEdges.textContent = `${stats.displayEdges}/${stats.edges}`;
+  } else {
+    statEdges.textContent = stats.edges || graph.links.length;
+  }
+  statComm.textContent = stats.communities || 0;
+
+  emptySt.style.display = 'none';
+  graphSvg.style.display = 'block';
+
+  try {
+    renderGraph();
+    renderInfluencers();
+    renderCommunities();
+    const nodesStr = stats.displayNodes && stats.displayNodes < stats.nodes
+      ? `${stats.displayNodes}/${stats.nodes}` : (stats.nodes || graph.nodes.length);
+    const edgesStr = stats.displayEdges && stats.displayEdges < stats.edges
+      ? `${stats.displayEdges}/${stats.edges}` : (stats.edges || graph.links.length);
+    updateStatus(`✓ Graph loaded: ${nodesStr} users, ${edgesStr} edges.`, 'ok');
+  } catch (err) {
+    console.error('Error rendering graph:', err);
+    updateStatus(`Error rendering graph: ${err.message}`, 'err');
+  }
 }
 
 // Render graph with D3
@@ -480,11 +474,77 @@ function renderCommunities() {
   });
 }
 
-// Render paths tab (Dijkstra)
+// Render history tab
+async function renderHistory() {
+  const content = document.querySelector('.tab-content.history');
+  if (!content) return;
+  content.innerHTML = '';
+
+  try {
+    const history = await getAllGraphHistory();
+
+    if (!history.length) {
+      content.innerHTML = '<div class="empty"><div class="empty-icon">📂</div><div class="empty-text">No saved analyses yet.<br>Run an analysis to build history.</div></div>';
+      return;
+    }
+
+    const typeLabels = { stars: 'Stars', followers: 'Followers', contributors: 'Contributors' };
+
+    history.forEach((entry) => {
+      const card = document.createElement('div');
+      card.className = 'history-card';
+
+      const date = new Date(entry.savedAt);
+      const dateStr = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      const timeStr = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+
+      card.innerHTML = `
+        <div class="history-card-header">
+          <span class="history-seed">@${entry.seed}</span>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span class="history-type">${typeLabels[entry.graphType] || entry.graphType}</span>
+            <button class="history-delete" data-id="${entry.id}" title="Delete">×</button>
+          </div>
+        </div>
+        <div class="history-meta">
+          ${entry.stats?.displayNodes ?? '?'} users · ${entry.stats?.displayEdges ?? '?'} edges · ${dateStr} ${timeStr}
+        </div>
+      `;
+
+      // Load this graph on card click (but not delete button)
+      card.addEventListener('click', async (e) => {
+        if (e.target.classList.contains('history-delete')) return;
+        const fullData = await getGraphById(entry.id);
+        if (fullData) {
+          applyGraphData(fullData);
+          updateStatus(`✓ Loaded history: @${fullData.seed}`, 'ok');
+          // Switch to Rank tab to show the graph
+          tabs.forEach(t => t.classList.remove('active'));
+          tabContents.forEach(tc => tc.classList.remove('active'));
+          document.querySelector('.tab[data-tab="influencers"]')?.classList.add('active');
+          document.querySelector('.tab-content.influencers')?.classList.add('active');
+        }
+      });
+
+      // Delete button
+      card.querySelector('.history-delete').addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await deleteGraphById(entry.id);
+        renderHistory(); // re-render the list
+      });
+
+      content.appendChild(card);
+    });
+  } catch (err) {
+    content.innerHTML = `<div class="empty"><div class="empty-text">Error loading history:<br>${err.message}</div></div>`;
+  }
+}
+
+// Render paths tab (Dijkstra / BFS path finder)
 function renderPathsTab() {
   const findBtn = document.getElementById('findPathBtn');
   if (!findBtn) return;
-  
+
   // Set up event listener if not already done
   if (!findBtn.hasAttribute('data-listener-set')) {
     findBtn.addEventListener('click', findPath);
@@ -616,17 +676,14 @@ function setupTabs() {
     tab.addEventListener('click', () => {
       tabs.forEach(t => t.classList.remove('active'));
       tabContents.forEach(tc => tc.classList.remove('active'));
-      
+
       tab.classList.add('active');
       const tabName = tab.getAttribute('data-tab');
       const targetContent = document.querySelector(`.tab-content.${tabName}`);
-      if (targetContent) {
-        targetContent.classList.add('active');
-      }
-      
-      if (tabName === 'paths') {
-        renderPathsTab();
-      }
+      if (targetContent) targetContent.classList.add('active');
+
+      if (tabName === 'paths')   renderPathsTab();
+      if (tabName === 'history') renderHistory();
     });
   });
 }
@@ -738,19 +795,30 @@ async function runAnalysis(username, graphType, maxNodes) {
       links: prunedLinks
     };
 
-    chrome.storage.local.set({
-      sna_graph: finalD3Data,
-      sna_influencers: filteredInfluencers,
-      sna_communities: prunedCommunityMap,
-      sna_seed: user.login,
-      sna_stats: {
-        nodes: totalNodesCount,
-        edges: totalEdgesCount,
+    // Save to IndexedDB history
+    const graphRecord = {
+      seed:        user.login,
+      graphType,
+      nodes:       prunedNodes,
+      links:       prunedLinks,
+      influencers: filteredInfluencers,
+      communities: prunedCommunityMap,
+      stats: {
+        nodes:        totalNodesCount,
+        edges:        totalEdgesCount,
         displayNodes: prunedNodes.length,
         displayEdges: prunedLinks.length,
-        communities: communitiesList.size
+        communities:  communitiesList.size
       }
+    };
+    const savedId = await saveGraph(graphRecord);
+
+    chrome.storage.local.set({
+      sna_graph_ready: { id: savedId, timestamp: Date.now() }
     });
+
+    // Directly apply to panel without waiting for the storage listener
+    applyGraphData(graphRecord);
 
   } catch (err) {
     console.error("Analysis failed:", err);
@@ -777,13 +845,18 @@ function checkPendingAnalysis() {
   });
 }
 
-// Listen for storage changes
+// Listen for storage changes — watch for the lightweight notify flag from popup
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === 'local') {
-    if (changes.sna_graph || changes.sna_influencers) {
-      loadGraphData();
+    // Popup saved a new graph — load it from IndexedDB
+    if (changes.sna_graph_ready?.newValue) {
+      const { id } = changes.sna_graph_ready.newValue;
+      getGraphById(id).then(data => {
+        if (data) applyGraphData(data);
+      }).catch(err => console.error('Failed to load new graph from IndexedDB:', err));
     }
-    if (changes.sna_pending_analysis && changes.sna_pending_analysis.newValue) {
+    // Background triggered a pending analysis
+    if (changes.sna_pending_analysis?.newValue) {
       checkPendingAnalysis();
     }
   }

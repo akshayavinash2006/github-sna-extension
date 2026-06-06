@@ -3,6 +3,7 @@ import { setToken, getUser, getStarredRepos, getStargazers, getRateLimit, getFol
 import { buildGraphFromStars, buildGraphFromFollowers, buildGraphFromContributors } from '../graph/builder.js';
 import { runAlgorithms } from '../algorithms/runner.js';
 import { cacheStats, cacheClearAll } from '../api/cache.js';
+import { saveGraph } from '../api/db.js';
 
 const usernameEl = document.getElementById('username');
 const tokenEl    = document.getElementById('token');
@@ -192,19 +193,26 @@ analyzeBtn.addEventListener('click', async () => {
       links: prunedLinks
     };
 
-    // Save pruned data to storage for side panel
-    chrome.storage.local.set({
-      sna_graph: finalD3Data,
-      sna_influencers: filteredInfluencers,
-      sna_communities: prunedCommunityMap,
-      sna_seed: username,
-      sna_stats: {
-        nodes: totalNodesCount,
-        edges: totalEdgesCount,
+    // Save full graph to IndexedDB (no size limit, persists as history)
+    const savedId = await saveGraph({
+      seed:        username,
+      graphType,
+      nodes:       prunedNodes,
+      links:       prunedLinks,
+      influencers: filteredInfluencers,
+      communities: prunedCommunityMap,
+      stats: {
+        nodes:        totalNodesCount,
+        edges:        totalEdgesCount,
         displayNodes: prunedNodes.length,
         displayEdges: prunedLinks.length,
-        communities: communities.size
+        communities:  communities.size
       }
+    });
+
+    // Notify side panel with a tiny flag — avoids putting huge data in chrome.storage.local
+    chrome.storage.local.set({
+      sna_graph_ready: { id: savedId, timestamp: Date.now() }
     }, () => {
       setStatus(`✓ Done! Showing ${prunedNodes.length}/${totalNodesCount} users, ${prunedLinks.length}/${totalEdgesCount} edges.`, 'ok');
       updateRateLimit();
