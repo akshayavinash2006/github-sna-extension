@@ -75,16 +75,73 @@ export async function buildGraphFromStars(seedUser, starredRepos, getStargazers,
     )
   );
 
-  // Build graph edges from collected results
+  // 1. Add all stargazers and connect them to the seed user
   for (const { repo, stargazers } of repoResults) {
     for (const gazer of stargazers) {
       graph.addNode(gazer);
       graph.addEdge(seedUser.login, gazer.login, repo.full_name);
-      // Connect co-stargazers (people who all starred the same repo)
-      for (const other of stargazers) {
-        if (gazer.login !== other.login) {
-          graph.addEdge(gazer.login, other.login, repo.full_name);
+    }
+  }
+
+  // 2. Identify all candidate co-stargazer edges and compute their weights (number of shared repos)
+  const candidateEdges = new Map();
+  for (const { repo, stargazers } of repoResults) {
+    const logins = stargazers.map(g => g.login).filter(l => l !== seedUser.login);
+    for (let i = 0; i < logins.length; i++) {
+      const u = logins[i];
+      for (let j = i + 1; j < logins.length; j++) {
+        const v = logins[j];
+        const key = u < v ? `${u}||${v}` : `${v}||${u}`;
+        if (!candidateEdges.has(key)) {
+          candidateEdges.set(key, { source: u, target: v, weight: 0, repos: [] });
         }
+        const edgeObj = candidateEdges.get(key);
+        edgeObj.weight += 1;
+        if (!edgeObj.repos.includes(repo.full_name)) {
+          edgeObj.repos.push(repo.full_name);
+        }
+      }
+    }
+  }
+
+  // Union-Find class for Kruskal's algorithm
+  class SimpleUnionFind {
+    constructor() {
+      this.parent = new Map();
+    }
+    find(x) {
+      if (!this.parent.has(x)) {
+        this.parent.set(x, x);
+        return x;
+      }
+      if (this.parent.get(x) !== x) {
+        this.parent.set(x, this.find(this.parent.get(x)));
+      }
+      return this.parent.get(x);
+    }
+    union(x, y) {
+      const rx = this.find(x);
+      const ry = this.find(y);
+      if (rx !== ry) {
+        this.parent.set(rx, ry);
+        return true;
+      }
+      return false;
+    }
+  }
+
+  // 3. Sort candidates by weight (number of shared repos) descending
+  const sortedCandidates = Array.from(candidateEdges.values())
+    .sort((a, b) => b.weight - a.weight);
+
+  // 4. Run Kruskal's to find Maximum Spanning Forest (MSF), plus add strong thresholded edges
+  const uf = new SimpleUnionFind();
+  for (const edge of sortedCandidates) {
+    const isSpanningEdge = uf.union(edge.source, edge.target);
+    // Add the edge if it helps connect components (spanning tree) OR if they share >= 2 repos
+    if (isSpanningEdge || edge.weight >= 2) {
+      for (const repoName of edge.repos) {
+        graph.addEdge(edge.source, edge.target, repoName);
       }
     }
   }
